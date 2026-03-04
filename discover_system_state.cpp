@@ -45,12 +45,16 @@ using BMCState = sdbusplus::client::xyz::openbmc_project::state::BMC<>;
 static void applyPowerRestoreDelay(sdbusplus::bus_t& bus,
                                    std::chrono::microseconds delayUsec)
 {
-#ifdef APPLY_POWER_POLICY_WHEN_BMC_READY
-    auto delaySec = std::chrono::duration_cast<std::chrono::seconds>(delayUsec);
-    phosphor::state::manager::utils::waitBmcReady(bus, delaySec);
-#else
-    std::this_thread::sleep_for(delayUsec);
-#endif
+    if constexpr (APPLY_POWER_POLICY_WHEN_BMC_READY)
+    {
+        auto delaySec =
+            std::chrono::duration_cast<std::chrono::seconds>(delayUsec);
+        phosphor::state::manager::utils::waitBmcReady(bus, delaySec);
+    }
+    else
+    {
+        std::this_thread::sleep_for(delayUsec);
+    }
 }
 
 int main(int argc, char** argv)
@@ -97,41 +101,45 @@ int main(int argc, char** argv)
     auto bmcPath = sdbusplus::message::object_path(BMC::namespace_path::value) /
                    BMC::namespace_path::bmc;
 
-#if !(RUN_APR_ON_PINHOLE_RESET && RUN_APR_ON_WATCHDOG_RESET &&                 \
-      RUN_APR_ON_SOFTWARE_RESET)
-    auto bmcRebootCause =
-        sdbusplus::message::convert_from_string<BMC::RebootCause>(
-            phosphor::state::manager::utils::getProperty(
-                bus, bmcPath.str, BMCState::interface,
-                BMCState::property_names::last_reboot_cause));
-
-#if !RUN_APR_ON_PINHOLE_RESET
-    if (bmcRebootCause == BMC::RebootCause::PinholeReset)
+    if constexpr (!(RUN_APR_ON_PINHOLE_RESET && RUN_APR_ON_WATCHDOG_RESET &&
+                    RUN_APR_ON_SOFTWARE_RESET))
     {
-        info(
-            "BMC was reset due to pinhole reset, no power restore policy will be run");
-        return 0;
-    }
-#endif // RUN_APR_ON_PINHOLE_RESET
+        auto bmcRebootCause =
+            sdbusplus::message::convert_from_string<BMC::RebootCause>(
+                phosphor::state::manager::utils::getProperty(
+                    bus, bmcPath.str, BMCState::interface,
+                    BMCState::property_names::last_reboot_cause));
 
-#if !RUN_APR_ON_WATCHDOG_RESET
-    if (bmcRebootCause == BMC::RebootCause::Watchdog)
-    {
-        info(
-            "BMC was reset due to watchdog, no power restore policy will be run");
-        return 0;
-    }
-#endif // RUN_APR_ON_WATCHDOG_RESET
+        if constexpr (!RUN_APR_ON_PINHOLE_RESET)
+        {
+            if (bmcRebootCause == BMC::RebootCause::PinholeReset)
+            {
+                info(
+                    "BMC was reset due to pinhole reset, no power restore policy will be run");
+                return 0;
+            }
+        }
 
-#if !RUN_APR_ON_SOFTWARE_RESET
-    if (bmcRebootCause == BMC::RebootCause::Software)
-    {
-        info(
-            "BMC was reset due to cold reset, no power restore policy will be run");
-        return 0;
+        if constexpr (!RUN_APR_ON_WATCHDOG_RESET)
+        {
+            if (bmcRebootCause == BMC::RebootCause::Watchdog)
+            {
+                info(
+                    "BMC was reset due to watchdog, no power restore policy will be run");
+                return 0;
+            }
+        }
+
+        if constexpr (!RUN_APR_ON_SOFTWARE_RESET)
+        {
+            if (bmcRebootCause == BMC::RebootCause::Software)
+            {
+                info(
+                    "BMC was reset due to cold reset, no power restore policy will be run");
+                return 0;
+            }
+        }
     }
-#endif // RUN_APR_ON_SOFTWARE_RESET
-#endif
 
     /* The logic here is to first check the one-time PowerRestorePolicy setting.
      * If this property is not the default then look at the persistent
@@ -223,14 +231,13 @@ int main(int argc, char** argv)
         // Always execute power on if AlwaysOn is set, otherwise check config
         // option (and AC loss status) on whether to execute other policy
         // settings
-#if ONLY_RUN_APR_ON_POWER_LOSS
-        else if (!phosphor::state::manager::utils::checkACLoss(hostId))
+        else if (ONLY_RUN_APR_ON_POWER_LOSS &&
+                 !phosphor::state::manager::utils::checkACLoss(hostId))
         {
             info(
                 "Chassis power was not on prior to BMC reboot so do not run any further power policy");
             return 0;
         }
-#endif
         else if (RestorePolicy::Policy::AlwaysOff ==
                  RestorePolicy::convertPolicyFromString(powerPolicy))
         {

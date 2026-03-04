@@ -88,10 +88,11 @@ void Host::setupSupportedTransitions()
         Transition::Off,
         Transition::Reboot,
         Transition::GracefulWarmReboot,
-#if ENABLE_FORCE_WARM_REBOOT
-        Transition::ForceWarmReboot,
-#endif
     };
+    if constexpr (ENABLE_FORCE_WARM_REBOOT)
+    {
+        supportedTransitions.insert(Transition::ForceWarmReboot);
+    }
     server::Host::allowedHostTransitions(supportedTransitions);
 }
 
@@ -108,19 +109,31 @@ void Host::createSystemdTargetMaps()
         {Transition::Off, std::format("obmc-host-shutdown@{}.target", id)},
         {Transition::On, std::format("obmc-host-start@{}.target", id)},
         {Transition::Reboot, std::format("obmc-host-reboot@{}.target", id)},
-// Some systems do not support a warm reboot so just map the reboot
-// requests to our normal cold reboot in that case
-#if ENABLE_WARM_REBOOT
-        {Transition::GracefulWarmReboot,
-         std::format("obmc-host-warm-reboot@{}.target", id)},
-        {Transition::ForceWarmReboot,
-         std::format("obmc-host-force-warm-reboot@{}.target", id)}};
-#else
-        {Transition::GracefulWarmReboot,
-         std::format("obmc-host-reboot@{}.target", id)},
-        {Transition::ForceWarmReboot,
-         std::format("obmc-host-reboot@{}.target", id)}};
-#endif
+    };
+
+    // Some systems do not support a warm reboot so just map the reboot
+    // requests to our normal cold reboot in that case
+    if constexpr (ENABLE_WARM_REBOOT)
+    {
+        transitionTargetTable.insert(
+            {Transition::GracefulWarmReboot,
+             std::format("obmc-host-warm-reboot@{}.target", id)});
+
+        transitionTargetTable.insert(
+            {{Transition::ForceWarmReboot,
+              std::format("obmc-host-force-warm-reboot@{}.target", id)}});
+    }
+    else
+    {
+        transitionTargetTable.insert(
+            {Transition::GracefulWarmReboot,
+             std::format("obmc-host-reboot@{}.target", id)});
+
+        transitionTargetTable.insert(
+            {Transition::ForceWarmReboot,
+             std::format("obmc-host-reboot@{}.target", id)});
+    }
+
     hostCrashTarget = std::format("obmc-host-crash@{}.target", id);
 }
 
@@ -416,14 +429,15 @@ Host::Transition Host::requestedHostTransition(Transition value)
     info("Host{HOST_ID} state transition request of {REQ}", "HOST_ID", id,
          "REQ", value);
 
-#if ONLY_ALLOW_BOOT_WHEN_BMC_READY
-    if ((value != Transition::Off) && (!utils::isBmcReady(this->bus)))
+    if constexpr (ONLY_ALLOW_BOOT_WHEN_BMC_READY)
     {
-        info("BMC State is not Ready so no host on operations allowed");
-        throw sdbusplus::xyz::openbmc_project::State::Host::Error::
-            BMCNotReady();
+        if ((value != Transition::Off) && (!utils::isBmcReady(this->bus)))
+        {
+            info("BMC State is not Ready so no host on operations allowed");
+            throw sdbusplus::xyz::openbmc_project::State::Host::Error::
+                BMCNotReady();
+        }
     }
-#endif
 
     // If this is not a power off request then we need to
     // decrement the reboot counter.  This code should
@@ -432,16 +446,18 @@ Host::Transition Host::requestedHostTransition(Transition value)
     // check of this count will occur
     if (value != server::Host::Transition::Off)
     {
-#ifdef CHECK_FWUPDATE_BEFORE_DO_TRANSITION
-        /*
-         * Do not do transition when the any firmware being updated
-         */
-        if (phosphor::state::manager::utils::isFirmwareUpdating(this->bus))
+        if constexpr (CHECK_FWUPDATE_BEFORE_DO_TRANSITION)
         {
-            info("Firmware being updated, reject the transition request");
-            throw sdbusplus::xyz::openbmc_project::Common::Error::Unavailable();
+            /*
+             * Do not do transition when the any firmware being updated
+             */
+            if (phosphor::state::manager::utils::isFirmwareUpdating(this->bus))
+            {
+                info("Firmware being updated, reject the transition request");
+                throw sdbusplus::xyz::openbmc_project::Common::Error::
+                    Unavailable();
+            }
         }
-#endif // CHECK_FWUPDATE_BEFORE_DO_TRANSITION
 
         decrementRebootCount();
     }

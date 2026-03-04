@@ -582,26 +582,28 @@ Chassis::Transition Chassis::requestedPowerTransition(Transition value)
     info(
         "Change to Chassis{CHASSIS_ID} Requested Power State: {REQ_POWER_TRAN}",
         "CHASSIS_ID", id, "REQ_POWER_TRAN", value);
-#if ONLY_ALLOW_BOOT_WHEN_BMC_READY
-    if ((value != Transition::Off) && (!utils::isBmcReady(this->bus)))
+    if constexpr (ONLY_ALLOW_BOOT_WHEN_BMC_READY)
     {
-        info("BMC State is not Ready so no chassis on operations allowed");
-        throw sdbusplus::xyz::openbmc_project::State::Chassis::Error::
-            BMCNotReady();
+        if ((value != Transition::Off) && (!utils::isBmcReady(this->bus)))
+        {
+            info("BMC State is not Ready so no chassis on operations allowed");
+            throw sdbusplus::xyz::openbmc_project::State::Chassis::Error::
+                BMCNotReady();
+        }
     }
-#endif
 
-#ifdef CHECK_FWUPDATE_BEFORE_DO_TRANSITION
-    /*
-     * Do not do transition when the any firmware being updated
-     */
-    if ((value != Transition::Off) &&
-        (phosphor::state::manager::utils::isFirmwareUpdating(this->bus)))
+    if constexpr (CHECK_FWUPDATE_BEFORE_DO_TRANSITION)
     {
-        info("Firmware being updated, reject the transition request");
-        throw sdbusplus::xyz::openbmc_project::Common::Error::Unavailable();
+        /*
+         * Do not do transition when the any firmware being updated
+         */
+        if ((value != Transition::Off) &&
+            (phosphor::state::manager::utils::isFirmwareUpdating(this->bus)))
+        {
+            info("Firmware being updated, reject the transition request");
+            throw sdbusplus::xyz::openbmc_project::Common::Error::Unavailable();
+        }
     }
-#endif // CHECK_FWUPDATE_BEFORE_DO_TRANSITION
 
     startUnit(systemdTargetTable.find(value)->second);
     return server::Chassis::requestedPowerTransition(value);
